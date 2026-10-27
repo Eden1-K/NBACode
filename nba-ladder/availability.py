@@ -29,7 +29,8 @@ HEADERS = {"User-Agent": "nba-ladder-model/1.0 (personal project)"}
 REPLACEMENT = 8.0
 SCALE = 0.5
 MAX_PLAYER = 8.0
-MAX_TEAM = 10.0
+MAX_TEAM = 8.0
+DECAY = 0.8   # diminishing returns: 2nd-biggest absence counts 80%, 3rd 64%, ... (minutes get absorbed)
 LAST_SEASON_WEIGHT_MIN = 500  # last season's minutes count like this many minutes this season
 
 # status -> (weight, days it applies when no return date is given)
@@ -165,15 +166,20 @@ def build(injuries, values, team_games, today):
     def active(team, d):
         return [r for r in rows if r["team"] == team and today <= d < r["until"]]
 
+    def combine(effects):
+        """Biggest absence counts fully, each next one a bit less; capped."""
+        return min(MAX_TEAM, sum(e * DECAY ** k for k, e in enumerate(sorted(effects, reverse=True))))
+
     def adj(team, d):
         """Expected points lost (used for game predictions)."""
-        return -min(MAX_TEAM, sum(r["effect"] for r in active(team, d)))
+        return -combine([r["effect"] for r in active(team, d)])
 
     def parts(team, d):
         """(certain points lost, [(full points, chance he sits)]) - for the simulations."""
-        act = active(team, d)
-        certain = -min(MAX_TEAM, sum(r["effect"] for r in act if r["weight"] >= 1))
-        maybe = [(-round(r["impact"] * r["share"], 2), r["weight"]) for r in act if r["weight"] < 1]
+        act = sorted(active(team, d), key=lambda r: -r["impact"] * r["share"])
+        certain = -combine([r["effect"] for r in act if r["weight"] >= 1])
+        maybe = [(-round(r["impact"] * r["share"] * DECAY ** k, 2), r["weight"])
+                 for k, r in enumerate(act) if r["weight"] < 1]
         return certain, maybe
     adj.parts = parts
     return rows, adj

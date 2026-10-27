@@ -164,6 +164,9 @@ details{margin-top:4px} summary{cursor:pointer;color:var(--text-2)}
     <h2>Backtest on past seasons</h2>
     <p class="note" id="btNote"></p>
     <div class="kpis" id="btKpis" style="margin-top:8px"></div>
+    <h2 style="font-size:14px;margin-top:16px">Model versions compared on the held-out season</h2>
+    <p class="note">Each was tuned on the earlier seasons only. The one with the lowest log loss is used.</p>
+    <div class="tablewrap"><table id="btCands" style="min-width:420px"></table></div>
     <div class="grid2" style="margin-top:4px">
       <div><h2 style="font-size:14px;margin-top:14px">Are the 80% win ranges honest?</h2>
         <p class="note">Projections made at points through the held-out season, checked against how it actually finished.</p>
@@ -180,11 +183,11 @@ details{margin-top:4px} summary{cursor:pointer;color:var(--text-2)}
     <details><summary>Show method</summary>
     <ul>
       <li><b>Team ratings.</b> Each team has a net rating (points better than average). It starts from the preseason sportsbook win total and is updated after every game with a Bayesian fit on game margins (home-court adjusted, blowouts capped at 20, older games slowly weighted down). The preseason prior is worth ~16 games, so by mid-season results dominate.</li>
-      <li><b>Rest.</b> Second night of a back-to-back, 3 games in 4 nights and 2+ days off each shift the expected margin; the sizes were fitted on past seasons (<span id="restVals"></span>). Past margins are rest-corrected before rating teams.</li>
+      <li><b>Rest &amp; travel.</b> Second night of a back-to-back, 3 games in 4 nights, 2+ days off, time zones crossed and long road trips each shift the expected margin; the sizes were fitted on past seasons (<span id="restVals"></span>). Past margins are rest-corrected before rating teams.</li>
       <li><b>Tuning.</b> Every setting (how much the preseason line is trusted, how fast old games fade, blowout cap, home court, rest, the probability spread and the uncertainty in the ranges) was chosen on 2023-24 and 2024-25, then checked on 2025-26, which was never used for tuning. Settings are only adopted if they beat the defaults on that held-out season.</li>
-      <li><b>Player availability.</b> Each player's value comes from his box-score Game Score per 36 minutes (blended with last season early on) and his minutes. Players on the injury report reduce the team's rating for the games they're expected to miss (Out = full, Doubtful 80%, Questionable 50%, Day-to-day 35%), scaled by how much of the season they've played, since the rating already reflects games they missed.</li>
+      <li><b>Player availability.</b> Each player's value comes from his box-score Game Score per 36 minutes (blended with last season early on) and his minutes. Players on the injury report reduce the team's rating for the games they're expected to miss (Out = full, Doubtful 80%, Questionable 50%, Day-to-day 35%; questionable players randomly sit or play in each simulation). Several absences have diminishing returns (each extra one counts 80% of the last, capped at 8 pts) because teammates absorb the minutes. Effects are scaled by how much of the season they've played, since the rating already reflects games they missed.</li>
       <li><b>Simulation.</b> The remaining schedule is played out __SIMS__ times. In each run, every team's true strength is drawn from its rating uncertainty plus an allowance for future injuries/trades, so ranges are wide early and narrow as the season goes on. Single-game spread (sigma, now __SIGMA__ pts) and home court (now __HCA__ pts) are re-estimated from this season's results.</li>
-      <li><b>Ladder.</b> Seeds 1–15 per conference (ties broken at random — real NBA tiebreakers aren't modelled), then the play-in (7v8, 9v10, loser vs winner), then every playoff series best-of-7 game by game with 2-2-1-1-1 home court, for round-by-round and title odds.</li>
+      <li><b>Ladder.</b> Seeds 1–15 per conference using NBA-style tiebreakers (record against the other tied teams, then conference record), then the play-in (7v8, 9v10, loser vs winner), then every playoff series best-of-7 game by game with 2-2-1-1-1 home court, for round-by-round and title odds.</li>
       <li><b>Scores.</b> The predicted margin comes from the ratings (so the predicted winner always matches the favourite). The predicted total comes from a second fit of how many combined points each team's games produce, starting from a 230-point league average. Score = (total ± margin) ÷ 2.</li>
       <li><b>Confidence.</b> Per-team 80% win ranges; ladder confidence measured inside the simulations; and an honest out-of-sample track record on games already played.</li>
       <li><b>Track records.</b> Walk-forward: every past game predicted using only earlier results (rest included; old injury reports aren't archived). Live: the exact prediction made before tip-off, frozen and scored afterwards. Both are compared with the betting market when ESPN publishes lines.</li>
@@ -330,7 +333,7 @@ document.addEventListener('mousemove', e => { const el = e.target.closest('[data
 (function(){
   const B = D.backtest;
   const rv = B && B.tuned ? B.tuned : null;
-  if (rv) $('restVals').textContent = `back-to-back ${rv.REST_B2B}, extra for 3-in-4 ${rv.REST_3IN4}, 2+ days off +${rv.REST_LONG} pts`;
+  if (rv) $('restVals').textContent = `back-to-back ${rv.REST_B2B}, extra for 3-in-4 ${rv.REST_3IN4}, 2+ days off +${rv.REST_LONG}, per time zone crossed ${rv.TZ_COEF ?? 0}, per road game beyond the 2nd in a row ${rv.ROAD_COEF ?? 0} pts`;
   if (!B) { $('btNote').textContent = 'Run backtest.py to generate.'; return; }
   const t = B.test_tuned, d0 = B.test_default, po = B.preseason_only_test;
   $('btNote').textContent = `Tuned on ${B.train.join(' + ')}, tested on ${B.test} (${t.n} games the tuning never saw). Using: ${B.adopted} settings.`;
@@ -340,6 +343,8 @@ document.addEventListener('mousemove', e => { const el = e.target.closest('[data
     {lab:`${B.test} log loss`, val:t.log_loss.toFixed(3), foot:`untuned ${d0.log_loss.toFixed(3)}`},
     {lab:'Avg miss on margin', val:t.margin_mae.toFixed(1) + ' pts', foot:`untuned ${d0.margin_mae.toFixed(1)} pts`},
   ].map(k => `<div class="kpi"><div class="lab">${k.lab}</div><div class="val num" style="font-size:24px">${k.val}</div><div class="foot">${k.foot}</div></div>`).join('');
+  $('btCands').innerHTML = (B.candidates || []).length ? `<thead><tr><th>Version</th><th class="r">Picks correct</th><th class="r">Brier</th><th class="r">Log loss</th><th class="r">Margin miss</th></tr></thead><tbody>` +
+    B.candidates.map(c => `<tr><td>${c.label}${c.label === B.adopted ? ' <span class="tag">in use</span>' : ''}</td><td class="r num">${pct(c.test.accuracy,1)}</td><td class="r num">${c.test.brier.toFixed(4)}</td><td class="r num">${c.test.log_loss.toFixed(4)}</td><td class="r num">${c.test.margin_mae.toFixed(2)}</td></tr>`).join('') + '</tbody>' : '';
   $('btCov').innerHTML = `<thead><tr><th>Projected at</th><th class="r">Inside 80% range</th><th class="r">±1 seed: expected</th><th class="r">actual</th><th class="r">Avg win error</th></tr></thead><tbody>` +
     B.coverage_test.map(c => `<tr><td>${c.checkpoint}</td><td class="r num">${pct(c.coverage80)}</td><td class="r num">${pct(c.pred_within1)}</td><td class="r num">${pct(c.real_within1)}</td><td class="r num">${c.mean_abs_win_err.toFixed(1)}</td></tr>`).join('') + '</tbody>';
   const sets = {'This season': D.segments || [], [B.test + ' backtest']: B.segments_test || []};

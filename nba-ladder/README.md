@@ -14,7 +14,10 @@ dashboard with:
   game in `docs/predictions.csv`, and predicted-vs-actual scores tracked for accuracy
 - **Player availability**: ESPN injury report x each player's value (box-score Game Score per 36,
   minutes, share of games played) adjusts the team's rating for the games he misses
-- **Rest**: back-to-backs and 3-in-4s cost points; 2+ days off helps a little
+- **Rest & travel**: back-to-backs, 3-in-4s, time zones crossed and long road trips (all fitted
+  on past seasons)
+- **Two rating engines**: weighted ridge regression or a Kalman state-space filter; `backtest.py`
+  tunes both and uses whichever scores better on the held-out season (`METHOD` in params)
 - **Playoff & title odds**: play-in plus every best-of-7 series simulated game by game (2-2-1-1-1)
 - **Live track record**: the exact pre-tip prediction is frozen in `data/live_log.json` and scored
   afterwards; compared with betting lines whenever ESPN publishes them
@@ -77,11 +80,11 @@ settings if they beat the defaults on the held-out season. Settings live in `dat
 games fade), `DRIFT_SD` (injury/trade allowance), `MARGIN_CAP` (blowout cap).
 
 ## Limitations
-- Real NBA tiebreakers aren't modelled (ties are broken at random).
+- Tiebreakers are simplified (record vs the other tied teams, then conference record;
+  division-winner rules aren't modelled).
 - Injury impact uses a box-score value (no on/off or lineup data), so defensive specialists are
   undervalued. Past injury reports aren't archived, so the walk-forward record excludes injuries
   (the live record includes them).
-- Travel distance and time zones aren't modelled (small effect).
 - Betting-line comparison depends on ESPN including odds in its feed.
 - Until the NBA Cup knockout games are scheduled (early Dec), each team's 2 unscheduled
   games are simulated against an average opponent.

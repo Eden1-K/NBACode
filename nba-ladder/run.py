@@ -31,10 +31,11 @@ def split(games, through):
 
 def snapshot(done, remaining, asof, n_sims, rest, game_adj, seed=11, random_adj=None):
     r, sd, hca = model.fit(done, asof, rest)
+    P = model.LAST_P
     sim = model.simulate(done, remaining, r, sd, hca, game_adj=game_adj, n_sims=n_sims, seed=seed,
-                         random_adj=random_adj)
+                         random_adj=random_adj, cov=P, asof=asof)
     teams, conf = model.summarise(sim, r, sd)
-    return teams, conf, (r, hca)
+    return teams, conf, (r, hca, P)
 
 
 def main():
@@ -79,7 +80,7 @@ def main():
     preds = model.walk_forward(done_all, rest)
     model.SIGMA = model.estimate_sigma(preds)
     for p in preds:
-        p["p_home"] = round(float(ndtr(p["mu"] / model.SIGMA)), 4)
+        p["p_home"] = round(model.prob(p["mu"], p.get("var", 0.0)), 4)
     record = model.track_record(preds)
     latest_games = [p for p in preds if p["date"] == latest]
 
@@ -121,7 +122,7 @@ def main():
     # 4. Headline projection + the one before it (same seed + same injury list, so the
     #    difference is what the latest results changed)
     d_now, rem_now = split(games, latest)
-    teams, conf, (r_now, hca_now) = snapshot(d_now, rem_now, latest, args.sims, rest, sim_adj,
+    teams, conf, (r_now, hca_now, P_now) = snapshot(d_now, rem_now, latest, args.sims, rest, sim_adj,
                                              random_adj=random_adj)
     tot_now = model.fit_totals(d_now, latest)
     d_prev, rem_prev = split(games, prev)
@@ -175,12 +176,14 @@ def main():
         rs = rest.get(g["id"], (0, 0, 1, 1))
         o = g.get("odds") or {}
         return {"id": g["id"], "date": g["date"], "home": g["home"], "away": g["away"],
-                "p_home": round(model.win_prob(r_now, hca_now, g["home"], g["away"], g["neutral"], adj), 3),
+                "p_home": round(model.win_prob(r_now, hca_now, g["home"], g["away"], g["neutral"], adj,
+                                    model.game_var(P_now, g["home"], g["away"])), 3),
                 "pred_hs": round(ph), "pred_as": round(pa), "rest_adj": round(ra, 2),
                 "avail_adj": round(aa, 2), "b2b_home": rs[2] == 0, "b2b_away": rs[3] == 0,
                 "market_p": model.market_prob(g), "line": o.get("details"), "ou": o.get("total"),
                 "disagree": (model.market_prob(g) is not None and abs(
-                    model.win_prob(r_now, hca_now, g["home"], g["away"], g["neutral"], adj) - model.market_prob(g)) >= 0.05)}
+                    model.win_prob(r_now, hca_now, g["home"], g["away"], g["neutral"], adj,
+                                    model.game_var(P_now, g["home"], g["away"])) - model.market_prob(g)) >= 0.05)}
     next_days = sorted({g["date"] for g in upcoming})[:7]
     nxt = [game_pred(g) for g in upcoming if g["date"] in next_days]
     csv_rows = ["date,away,home,pred_away,pred_home,home_win_prob,rest_adj,injury_adj"]
@@ -218,7 +221,7 @@ def main():
         with open(bt_path) as f:
             bt = json.load(f)
         backtest = {k: bt.get(k) for k in ("train", "test", "adopted", "test_default", "test_tuned",
-                                           "preseason_only_test", "coverage_test", "segments_test",
+                                           "preseason_only_test", "coverage_test", "segments_test", "candidates",
                                            "tuned", "generated_at")}
     out = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

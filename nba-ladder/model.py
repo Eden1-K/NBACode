@@ -40,6 +40,19 @@ REST_B2B = -1.5     # second night of a back-to-back
 REST_3IN4 = -0.5    # extra if it's also the 3rd game in 4 nights
 REST_LONG = 0.3     # 2+ days off
 
+# Travel (fitted on past seasons; 0 = no effect)
+REST_B2B_AWAY = 0.0 # extra for the AWAY team on the second night of a back-to-back
+TZ_COEF = 0.0       # per hour of time-zone change since the team's previous game
+ROAD_COEF = 0.0     # per road game beyond the 2nd in a row (capped at 3)
+
+# Rating engine: "ridge" (weighted regression) or "kalman" (state-space: strength drifts day
+# to day, uncertainty comes from the same model). backtest.py picks whichever does better.
+METHOD = "ridge"
+KF_P0_SD = 4.0      # preseason uncertainty of a team's rating (points)
+KF_Q_DAY = 0.06     # daily random drift of true strength (points)
+KF_R_SD = 12.5      # single-game margin noise used by the filter
+KF_SIM_SCALE = 1.0  # scales simulated uncertainty; calibrated so 80% win ranges hold ~80%
+
 TOTAL_PRIOR = 230.0 # league-average combined points per game (prior)
 TOTAL_K = 10.0
 MU_K = 30.0
@@ -47,7 +60,9 @@ MU_K = 30.0
 # Tuned values from backtest.py (data/params.json) override the defaults above.
 _PARAMS_FILE = __import__("os").path.join(__import__("os").path.dirname(__file__), "data", "params.json")
 TUNABLE = ["PRIOR_K", "HALF_LIFE", "HCA_PRIOR", "HCA_K", "MARGIN_CAP", "DRIFT_SD", "REST_B2B",
-           "REST_3IN4", "REST_LONG", "TOTAL_K", "SIGMA_PRIOR", "SD_SCALE", "RESID_SD"]
+           "REST_3IN4", "REST_LONG", "TOTAL_K", "SIGMA_PRIOR", "SD_SCALE", "RESID_SD",
+           "REST_B2B_AWAY", "TZ_COEF", "ROAD_COEF", "METHOD", "KF_P0_SD", "KF_Q_DAY", "KF_R_SD",
+           "KF_SIM_SCALE", "WINS_PER_POINT"]
 DEFAULTS = {k: globals()[k] for k in TUNABLE}
 if __import__("os").path.exists(_PARAMS_FILE):
     import json as _json
@@ -68,7 +83,14 @@ def set_params(**kw):
 
 
 N = len(ABBRS)
+LAST_P = None       # Kalman posterior covariance from the most recent fit()
 IDX = {a: i for i, a in enumerate(ABBRS)}
+# hours relative to US Eastern (standard time) - for travel
+TZ = {**{a: 0 for a in ("ATL", "BOS", "BKN", "CHA", "CLE", "DET", "IND", "MIA", "NY", "ORL", "PHI",
+                         "TOR", "WSH")},
+      **{a: -1 for a in ("CHI", "DAL", "HOU", "MEM", "MIL", "MIN", "NO", "OKC", "SA")},
+      **{a: -2 for a in ("DEN", "UTAH", "PHX")},
+      **{a: -3 for a in ("GS", "LAC", "LAL", "POR", "SAC")}}
 CONF = np.array([TEAMS[a][1] for a in ABBRS])
 
 
@@ -84,19 +106,29 @@ def _ord(d):
 
 # ---------------------------------------------------------------- rest / schedule
 def rest_adjustments(games):
-    """{game_id: (home_rest_pts, away_rest_pts, home_days_off, away_days_off)} from the full schedule."""
+    """{game_id: (home_pts, away_pts, home_days_off, away_days_off)} from the full schedule.
+    Points include rest (back-to-backs, 3-in-4, long rest) and travel (time zones crossed,
+    long road trips)."""
     by_team = {a: [] for a in ABBRS}
     for g in games:
-        by_team[g["home"]].append((_ord(g["date"]), g["id"]))
-        by_team[g["away"]].append((_ord(g["date"]), g["id"]))
+        by_team[g["home"]].append((_ord(g["date"]), g["id"], g["home"], True))
+        by_team[g["away"]].append((_ord(g["date"]), g["id"], g["home"], False))
     per = {}
     for team, lst in by_team.items():
         lst.sort()
-        for k, (d, gid) in enumerate(lst):
+        trip = 0
+        for k, (d, gid, venue, home) in enumerate(lst):
             off = d - lst[k - 1][0] - 1 if k else 3
             pts = REST_B2B if off == 0 else (REST_LONG if off >= 2 else 0.0)
             if off == 0 and k >= 2 and d - lst[k - 2][0] <= 3:
                 pts += REST_3IN4
+            if off == 0 and not home:
+                pts += REST_B2B_AWAY
+            if k:
+                pts += TZ_COEF * abs(TZ[venue] - TZ[lst[k - 1][2]])
+            trip = 0 if home else trip + 1
+            if not home:
+                pts += ROAD_COEF * min(max(trip - 2, 0), 3)
             per[(team, gid)] = (pts, off)
     out = {}
     for g in games:
@@ -125,9 +157,52 @@ def _design(games, rest=None):
     return X, h, a, np.clip(m, -MARGIN_CAP, MARGIN_CAP), tot, t
 
 
+class Kalman:
+    """30-team state-space rating. Each day every team's true strength drifts (random walk,
+    sd KF_Q_DAY per day); each game is a noisy observation of the rating gap."""
+
+    def __init__(self, prior, start_ord):
+        self.x = np.array(prior, float).copy()
+        self.P = np.eye(N) * KF_P0_SD ** 2
+        self.t = start_ord
+
+    def advance(self, t):
+        if t > self.t:
+            self.P += np.eye(N) * (KF_Q_DAY ** 2) * (t - self.t)
+            self.t = t
+
+    def predict(self, h, a):
+        return self.x[h] - self.x[a], self.P[h, h] + self.P[a, a] - 2 * self.P[h, a]
+
+    def update(self, h, a, y):
+        """y = home margin minus home court/rest, capped."""
+        mu, var = self.predict(h, a)
+        Ph = self.P[:, h] - self.P[:, a]
+        k = Ph / (var + KF_R_SD ** 2)
+        self.x += k * (y - mu)
+        self.P -= np.outer(k, Ph)
+
+
+def _kf_obs(g, rest):
+    ra = (rest[g["id"]][0] - rest[g["id"]][1]) if rest and g["id"] in rest else 0.0
+    y = g["hs"] - g["as"] - ra - (0 if g["neutral"] else HCA_PRIOR)
+    return float(np.clip(y, -MARGIN_CAP, MARGIN_CAP))
+
+
 def fit(games_done, asof, rest=None, prior=None, design=None):
-    """Ratings from completed games up to `asof` (ridge regression toward the preseason prior)."""
+    """Ratings from completed games up to `asof`. Returns (ratings, sd, home court)."""
+    global LAST_P
     prior = prior_ratings() if prior is None else prior
+    if METHOD == "kalman":
+        gs = sorted(games_done, key=lambda g: g["date"])
+        kf = Kalman(prior, _ord(gs[0]["date"]) if gs else _ord(asof))
+        for g in gs:
+            kf.advance(_ord(g["date"]))
+            kf.update(IDX[g["home"]], IDX[g["away"]], _kf_obs(g, rest))
+        kf.advance(_ord(asof))
+        LAST_P = kf.P.copy()
+        r = kf.x - kf.x.mean()
+        return r, np.sqrt(np.diag(kf.P)), HCA_PRIOR
     A = np.zeros((N + 1, N + 1))
     b = np.zeros(N + 1)
     A[:N, :N] += np.eye(N) * PRIOR_K
@@ -145,6 +220,7 @@ def fit(games_done, asof, rest=None, prior=None, design=None):
     sol = np.linalg.solve(A, b)
     r = sol[:N] - sol[:N].mean()
     sd = SD_SCALE * SIGMA_PRIOR / np.sqrt(PRIOR_K + eff_n)
+    LAST_P = None
     return r, sd, sol[N]
 
 
@@ -170,8 +246,20 @@ def exp_margin(r, hca, home, away, neutral=False, adj=0.0):
     return r[IDX[home]] - r[IDX[away]] + (0 if neutral else hca) + adj
 
 
-def win_prob(r, hca, home, away, neutral=False, adj=0.0):
-    return float(ndtr(exp_margin(r, hca, home, away, neutral, adj) / SIGMA))
+def game_var(P, home, away):
+    """Rating uncertainty of the gap between two teams (Kalman only; 0 for ridge)."""
+    if P is None:
+        return 0.0
+    h, a = IDX[home], IDX[away]
+    return float(P[h, h] + P[a, a] - 2 * P[h, a])
+
+
+def prob(mu, var=0.0):
+    return float(ndtr(mu / np.sqrt(SIGMA ** 2 + var)))
+
+
+def win_prob(r, hca, home, away, neutral=False, adj=0.0, var=0.0):
+    return prob(exp_margin(r, hca, home, away, neutral, adj), var)
 
 
 def predict_score(r, hca, tot, home, away, neutral=False, adj=0.0):
@@ -196,18 +284,25 @@ def _series(rng, true, hca, a, b, a_home):
 
 
 def simulate(done, remaining, r, sd, hca, game_adj=None, n_sims=10000, seed=7, chunk=2500,
-             random_adj=None):
+             random_adj=None, cov=None, asof=None):
     """random_adj: [(game_id, sign, points, p_out)] - questionable/day-to-day players, who
     either sit (full effect) or play in each simulation, instead of a fixed partial effect."""
     """Monte Carlo the rest of the season + play-in + playoffs."""
     rng = np.random.default_rng(seed)
     wins0 = np.zeros(N)
     played = np.zeros(N)
+    h2h0 = np.zeros((N, N))          # h2h0[i, j] = wins of i over j
+    confw0 = np.zeros(N)
+    same_conf = CONF[:, None] == CONF[None, :]
     for g in done:
         h, a = IDX[g["home"]], IDX[g["away"]]
         played[h] += 1
         played[a] += 1
-        wins0[h if g["hs"] > g["as"] else a] += 1
+        w, l = (h, a) if g["hs"] > g["as"] else (a, h)
+        wins0[w] += 1
+        h2h0[w, l] += 1
+        if same_conf[h, a]:
+            confw0[w] += 1
     H = np.array([IDX[g["home"]] for g in remaining], dtype=int)
     A = np.array([IDX[g["away"]] for g in remaining], dtype=int)
     nh = np.array([0.0 if g["neutral"] else 1.0 for g in remaining])
@@ -220,6 +315,23 @@ def simulate(done, remaining, r, sd, hca, game_adj=None, n_sims=10000, seed=7, c
     onehot_h = np.zeros((G, N)); onehot_h[np.arange(G), H] = 1
     onehot_a = np.zeros((G, N)); onehot_a[np.arange(G), A] = 1
     tot_sd = np.sqrt(sd ** 2 + DRIFT_SD ** 2)
+    kalman = cov is not None
+    if kalman:  # strengths drift day by day from the posterior (uncertainty grows with time ahead)
+        L = np.linalg.cholesky(cov + np.eye(N) * 1e-9) * KF_SIM_SCALE
+        t0 = _ord(asof) if asof else 0
+        dayidx = np.array([max(_ord(g["date"]) - t0, 1) for g in remaining], dtype=int) if G else np.zeros(0, int)
+        D = int(dayidx.max()) if G else 1
+        q = KF_Q_DAY * KF_SIM_SCALE
+    cm = np.array([1.0 if same_conf[IDX[g["home"]], IDX[g["away"]]] else 0.0 for g in remaining])
+    Mh = np.zeros((G, N * N)); Mh[np.arange(G), H * N + A] = 1   # home beat away
+    Ma = np.zeros((G, N * N)); Ma[np.arange(G), A * N + H] = 1
+    conf_games = np.zeros(N)
+    for g in list(done) + list(remaining):
+        h, a = IDX[g["home"]], IDX[g["away"]]
+        if same_conf[h, a]:
+            conf_games[h] += 1
+            conf_games[a] += 1
+    tie_mask = same_conf & ~np.eye(N, dtype=bool)
     gpos = {g["id"]: k for k, g in enumerate(remaining)}
     comps = [(gpos[gid], sg * pts, p) for gid, sg, pts, p in (random_adj or []) if gid in gpos]
 
@@ -227,23 +339,43 @@ def simulate(done, remaining, r, sd, hca, game_adj=None, n_sims=10000, seed=7, c
     for start in range(0, n_sims, chunk):
         S = min(chunk, n_sims - start)
         ix = np.arange(S)
-        true = r + rng.standard_normal((S, N)) * tot_sd
+        if kalman:
+            true0 = r + rng.standard_normal((S, N)) @ L.T
+            W = np.cumsum(rng.standard_normal((S, D + 1, N)).astype(np.float32) * q, axis=1)
+            true = true0 + W[:, -1, :]                      # end-of-season strength (playoffs)
+            sh = true0[:, H] + W[:, dayidx, H] if G else None
+            sa = true0[:, A] + W[:, dayidx, A] if G else None
+            del W
+        else:
+            true = r + rng.standard_normal((S, N)) * tot_sd
+            sh, sa = (true[:, H], true[:, A]) if G else (None, None)
         if G:
             extra = np.zeros((S, G))
             for gi, eff, pout in comps:
                 extra[:, gi] += eff * (rng.random(S) < pout)
-            p = ndtr((true[:, H] - true[:, A] + hca * nh + adj + extra) / SIGMA)
+            p = ndtr((sh - sa + hca * nh + adj + extra) / SIGMA)
             hw = (rng.random((S, G)) < p).astype(float)
             wins = wins0 + hw @ onehot_h + (1 - hw) @ onehot_a
+            h2h = (h2h0.reshape(-1) + hw @ Mh + (1 - hw) @ Ma).reshape(S, N, N)
+            confw = confw0 + (hw * cm) @ onehot_h + ((1 - hw) * cm) @ onehot_a
         else:
             wins = np.tile(wins0, (S, 1))
+            h2h = np.broadcast_to(h2h0, (S, N, N))
+            confw = np.tile(confw0, (S, 1))
         if pad.any():
             wins = wins + rng.binomial(pad, ndtr(true / SIGMA))
         seed_m = np.zeros((S, N), dtype=int)
         po = np.zeros((S, N), dtype=bool)
         r2 = np.zeros((S, N), dtype=bool); cf = np.zeros((S, N), dtype=bool)
         fin = np.zeros((S, N), dtype=bool); title = np.zeros((S, N), dtype=bool)
-        key = wins + rng.random((S, N)) * 0.1  # random tiebreak
+        # Tiebreakers: record vs the other teams tied on wins (head-to-head), then
+        # conference record, then a coin flip.
+        eq = (wins[:, :, None] == wins[:, None, :]) & tie_mask[None]
+        gw = (h2h * eq).sum(2)
+        gg = ((h2h + h2h.transpose(0, 2, 1)) * eq).sum(2)
+        grp = np.where(gg > 0, gw / np.maximum(gg, 1), 0.5)
+        cpct = confw / np.maximum(conf_games, 1)
+        key = wins + 0.1 * grp + 0.01 * cpct + 0.001 * rng.random((S, N))
         champs = {}
 
         def play(home, away):
@@ -347,14 +479,20 @@ def walk_forward(done, rest, prior=None):
     done_sorted = [g for d in sorted(by_day) for g in by_day[d]]
     full = _design(done_sorted, rest) if done_sorted else None
     gp = {t: 0 for t in ABBRS}
+    kf = Kalman(prior, _ord(min(by_day))) if METHOD == "kalman" and by_day else None
     for day in sorted(by_day):
         k = len(before)
         des = tuple(x[:k] for x in full) if k else None
-        r, _, hca = fit(before, day, rest, prior=prior, design=des)
+        if kf:
+            kf.advance(_ord(day))
+            r, hca = kf.x - kf.x.mean(), HCA_PRIOR
+        else:
+            r, _, hca = fit(before, day, rest, prior=prior, design=des)
         tot = fit_totals(before, day, design=des)
         for g in by_day[day]:
             ra = rest[g["id"]][0] - rest[g["id"]][1] if g["id"] in rest else 0.0
             mu = exp_margin(r, hca, g["home"], g["away"], g["neutral"], ra)
+            var = kf.predict(IDX[g["home"]], IDX[g["away"]])[1] if kf else 0.0
             p0 = float(ndtr(exp_margin(prior, HCA_PRIOR, g["home"], g["away"], g["neutral"]) / SIGMA_PRIOR))
             ph, pa = predict_score(r, hca, tot, g["home"], g["away"], g["neutral"], ra)
             preds.append({"date": day, "id": g["id"], "home": g["home"], "away": g["away"],
@@ -365,13 +503,15 @@ def walk_forward(done, rest, prior=None):
                           "market_p": market_prob(g),
                           "off_h": rest[g["id"]][2] if g["id"] in rest else 1,
                           "off_a": rest[g["id"]][3] if g["id"] in rest else 1,
-                          "gn": min(gp[g["home"]], gp[g["away"]]) + 1})
+                          "gn": min(gp[g["home"]], gp[g["away"]]) + 1, "var": round(var, 3)})
         for g in by_day[day]:
             gp[g["home"]] += 1
             gp[g["away"]] += 1
+            if kf:
+                kf.update(IDX[g["home"]], IDX[g["away"]], _kf_obs(g, rest))
         before.extend(by_day[day])
     for p in preds:  # probabilities use the current SIGMA
-        p["p_home"] = round(float(ndtr(p["mu"] / SIGMA)), 4)
+        p["p_home"] = round(prob(p["mu"], p["var"]), 4)
     return preds
 
 
