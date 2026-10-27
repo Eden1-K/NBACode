@@ -2,17 +2,26 @@
  "params": {
   "PRIOR_K": 6,
   "HALF_LIFE": 30,
-  "HCA_PRIOR": 2.0,
+  "HCA_PRIOR": 1.5,
   "HCA_K": 2000,
   "MARGIN_CAP": 30,
   "DRIFT_SD": 2.0,
-  "REST_B2B": -2.25,
-  "REST_3IN4": -0.5,
+  "REST_B2B": -3.0,
+  "REST_3IN4": 0.0,
   "REST_LONG": 0.6,
   "TOTAL_K": 5,
   "SIGMA_PRIOR": 11.75,
   "SD_SCALE": 0.6,
-  "RESID_SD": 13.98
+  "RESID_SD": 13.97,
+  "REST_B2B_AWAY": 0.0,
+  "TZ_COEF": -0.5,
+  "ROAD_COEF": -0.4,
+  "METHOD": "ridge",
+  "KF_P0_SD": 4.0,
+  "KF_Q_DAY": 0.06,
+  "KF_R_SD": 12.5,
+  "KF_SIM_SCALE": 1.0,
+  "WINS_PER_POINT": 2.7
  },
- "source": "backtest 2026-10-27T01:48:57+00:00 (tuned)"
+ "source": "backtest 2026-10-27T02:26:17+00:00 (Ridge + travel (retuned))"
 }
