@@ -48,10 +48,15 @@ jobs:
             git commit -m "Ladder update $(date -u +%Y-%m-%d)"
             git push
           fi
+      # Website: needs Settings -> Pages -> Source = "GitHub Actions" (and a public repo or the
+      # student plan). If Pages isn't on yet, these steps are skipped without failing the update.
       - name: Publish dashboard
         uses: actions/configure-pages@v5
+        continue-on-error: true
       - uses: actions/upload-pages-artifact@v4
+        continue-on-error: true
         with:
           path: nba-ladder/docs
       - id: deploy
         uses: actions/deploy-pages@v4
+        continue-on-error: true
