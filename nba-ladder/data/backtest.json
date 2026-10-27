@@ -1,0 +1,265 @@
+{
+ "generated_at": "2026-10-27T01:48:57+00:00",
+ "train": [
+  "2023-24",
+  "2024-25"
+ ],
+ "test": "2025-26",
+ "adopted": "tuned",
+ "defaults": {
+  "PRIOR_K": 16.0,
+  "HALF_LIFE": 90,
+  "HCA_PRIOR": 2.5,
+  "HCA_K": 150.0,
+  "MARGIN_CAP": 20,
+  "DRIFT_SD": 1.5,
+  "REST_B2B": -1.5,
+  "REST_3IN4": -0.5,
+  "REST_LONG": 0.3,
+  "TOTAL_K": 10.0,
+  "SIGMA_PRIOR": 12.0,
+  "SD_SCALE": 1.0,
+  "RESID_SD": 14.0
+ },
+ "tuned": {
+  "PRIOR_K": 6,
+  "HALF_LIFE": 30,
+  "HCA_PRIOR": 2.0,
+  "HCA_K": 2000,
+  "MARGIN_CAP": 30,
+  "DRIFT_SD": 2.0,
+  "REST_B2B": -2.25,
+  "REST_3IN4": -0.5,
+  "REST_LONG": 0.6,
+  "TOTAL_K": 5,
+  "SIGMA_PRIOR": 11.75,
+  "SD_SCALE": 0.6,
+  "RESID_SD": 13.98
+ },
+ "test_default": {
+  "n": 1230,
+  "accuracy": 0.6829,
+  "brier": 0.2043,
+  "log_loss": 0.5954,
+  "margin_mae": 11.45,
+  "margin_rmse": 14.63
+ },
+ "test_tuned": {
+  "n": 1230,
+  "accuracy": 0.6878,
+  "brier": 0.2017,
+  "log_loss": 0.5893,
+  "margin_mae": 11.29,
+  "margin_rmse": 14.45
+ },
+ "train_default": {
+  "n": 2460,
+  "accuracy": 0.6703,
+  "brier": 0.2091,
+  "log_loss": 0.6051,
+  "margin_mae": 10.99,
+  "margin_rmse": 14.1
+ },
+ "train_tuned": {
+  "n": 2460,
+  "accuracy": 0.6663,
+  "brier": 0.2075,
+  "log_loss": 0.6012,
+  "margin_mae": 10.9,
+  "margin_rmse": 13.98
+ },
+ "drift_calibration": [
+  {
+   "sd_scale": 0.6,
+   "drift_sd": 0.0,
+   "coverage80": 0.7083
+  },
+  {
+   "sd_scale": 0.6,
+   "drift_sd": 1.0,
+   "coverage80": 0.7375
+  },
+  {
+   "sd_scale": 0.6,
+   "drift_sd": 2.0,
+   "coverage80": 0.7958
+  },
+  {
+   "sd_scale": 0.8,
+   "drift_sd": 0.0,
+   "coverage80": 0.7458
+  },
+  {
+   "sd_scale": 0.8,
+   "drift_sd": 1.0,
+   "coverage80": 0.7625
+  },
+  {
+   "sd_scale": 0.8,
+   "drift_sd": 2.0,
+   "coverage80": 0.8292
+  },
+  {
+   "sd_scale": 1.0,
+   "drift_sd": 0.0,
+   "coverage80": 0.8042
+  },
+  {
+   "sd_scale": 1.0,
+   "drift_sd": 1.0,
+   "coverage80": 0.8209
+  },
+  {
+   "sd_scale": 1.0,
+   "drift_sd": 2.0,
+   "coverage80": 0.8625
+  },
+  {
+   "sd_scale": 1.2,
+   "drift_sd": 0.0,
+   "coverage80": 0.85
+  },
+  {
+   "sd_scale": 1.2,
+   "drift_sd": 1.0,
+   "coverage80": 0.8583
+  },
+  {
+   "sd_scale": 1.2,
+   "drift_sd": 2.0,
+   "coverage80": 0.8917
+  },
+  {
+   "sd_scale": 1.4,
+   "drift_sd": 0.0,
+   "coverage80": 0.8917
+  },
+  {
+   "sd_scale": 1.4,
+   "drift_sd": 1.0,
+   "coverage80": 0.8917
+  },
+  {
+   "sd_scale": 1.4,
+   "drift_sd": 2.0,
+   "coverage80": 0.9
+  }
+ ],
+ "coverage_test": [
+  {
+   "checkpoint": "20% of season",
+   "date": "2025-11-21",
+   "coverage80": 0.7667,
+   "pred_within1": 0.6095,
+   "real_within1": 0.5667,
+   "mean_abs_win_err": 5.08
+  },
+  {
+   "checkpoint": "40% of season",
+   "date": "2025-12-27",
+   "coverage80": 0.7,
+   "pred_within1": 0.6358,
+   "real_within1": 0.5333,
+   "mean_abs_win_err": 5.12
+  },
+  {
+   "checkpoint": "60% of season",
+   "date": "2026-01-29",
+   "coverage80": 0.7,
+   "pred_within1": 0.6926,
+   "real_within1": 0.7,
+   "mean_abs_win_err": 3.75
+  },
+  {
+   "checkpoint": "80% of season",
+   "date": "2026-03-09",
+   "coverage80": 0.8667,
+   "pred_within1": 0.8279,
+   "real_within1": 0.8,
+   "mean_abs_win_err": 1.93
+  }
+ ],
+ "segments_test": [
+  {
+   "segment": "Home favourite",
+   "n": 758,
+   "accuracy": 0.6966,
+   "pred": 0.6935,
+   "brier": 0.1988
+  },
+  {
+   "segment": "Road favourite",
+   "n": 472,
+   "accuracy": 0.6737,
+   "pred": 0.6607,
+   "brier": 0.2062
+  },
+  {
+   "segment": "Coin flip (50-55%)",
+   "n": 198,
+   "accuracy": 0.5202,
+   "pred": 0.5263,
+   "brier": 0.2495
+  },
+  {
+   "segment": "Lean (55-65%)",
+   "n": 376,
+   "accuracy": 0.617,
+   "pred": 0.6001,
+   "brier": 0.2358
+  },
+  {
+   "segment": "Solid (65-75%)",
+   "n": 296,
+   "accuracy": 0.7264,
+   "pred": 0.7012,
+   "brier": 0.1971
+  },
+  {
+   "segment": "Strong (75%+)",
+   "n": 360,
+   "accuracy": 0.8222,
+   "pred": 0.8337,
+   "brier": 0.1434
+  },
+  {
+   "segment": "Team games 1-10",
+   "n": 155,
+   "accuracy": 0.6839,
+   "pred": 0.6731,
+   "brier": 0.1955
+  },
+  {
+   "segment": "Team games 11-30",
+   "n": 304,
+   "accuracy": 0.6546,
+   "pred": 0.696,
+   "brier": 0.2139
+  },
+  {
+   "segment": "Team games 31+",
+   "n": 771,
+   "accuracy": 0.7017,
+   "pred": 0.6765,
+   "brier": 0.1981
+  },
+  {
+   "segment": "Back-to-back involved",
+   "n": 371,
+   "accuracy": 0.655,
+   "pred": 0.6832,
+   "brier": 0.2155
+  },
+  {
+   "segment": "Both teams rested",
+   "n": 859,
+   "accuracy": 0.702,
+   "pred": 0.6799,
+   "brier": 0.1957
+  }
+ ],
+ "preseason_only_test": {
+  "accuracy": 0.6398,
+  "brier": 0.22
+ }
+}

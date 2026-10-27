@@ -1,0 +1,18 @@
+{
+ "params": {
+  "PRIOR_K": 6,
+  "HALF_LIFE": 30,
+  "HCA_PRIOR": 2.0,
+  "HCA_K": 2000,
+  "MARGIN_CAP": 30,
+  "DRIFT_SD": 2.0,
+  "REST_B2B": -2.25,
+  "REST_3IN4": -0.5,
+  "REST_LONG": 0.6,
+  "TOTAL_K": 5,
+  "SIGMA_PRIOR": 11.75,
+  "SD_SCALE": 0.6,
+  "RESID_SD": 13.98
+ },
+ "source": "backtest 2026-10-27T01:48:57+00:00 (tuned)"
+}
