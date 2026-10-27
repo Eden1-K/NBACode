@@ -10,26 +10,34 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: ladder-update
   cancel-in-progress: false
 
+defaults:
+  run:
+    working-directory: nba-ladder   # the project lives in this folder of the repo
+
 jobs:
   update:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: pip
       - run: pip install -r requirements.txt
       - name: Run model
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}   # optional - see README
         run: python run.py
-      - name: Commit results
+      - name: Save results to the repo
         run: |
           git config user.name "ladder-bot"
           git config user.email "ladder-bot@users.noreply.github.com"
@@ -40,3 +48,10 @@ jobs:
             git commit -m "Ladder update $(date -u +%Y-%m-%d)"
             git push
           fi
+      - name: Publish dashboard
+        uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: nba-ladder/docs
+      - id: deploy
+        uses: actions/deploy-pages@v4
